@@ -5,11 +5,18 @@ set -e
 MIRROR="https://mirror.yandex.ru/gentoo-distfiles"
 STAGE3_PATH="releases/amd64/autobuilds/latest-stage3-amd64-systemd.txt"
 
-# Проверка root
+# Проверка root и зависимостей
 if [ "$EUID" -ne 0 ]; then
   echo "Запустите скрипт от root!"
   exit 1
 fi
+
+for cmd in parted wget tar chroot; do
+  if ! command -v $cmd &> /dev/null; then
+    echo "Ошибка: $cmd не установлен!"
+    exit 1
+  fi
+done
 
 # Функция подтверждения
 confirm() {
@@ -20,7 +27,12 @@ confirm() {
 
 # Шаг 1: Настройка сети
 echo -e "\n\033[1;32m[1/13] Настройка сети\033[0m"
-confirm "Настроить проводное подключение (dhcpcd)?" && dhcpcd
+confirm "Настроить проводное подключение (dhcpcd)?" && {
+  dhcpcd || {
+    echo "Ошибка настройки сети!"
+    exit 1
+  }
+}
 
 # Шаг 2: Разметка диска
 echo -e "\n\033[1;32m[2/13] Разметка диска\033[0m"
@@ -36,29 +48,35 @@ confirm "Разметить диск ${DISK}? ВСЕ ДАННЫЕ БУДУТ У�
 
 # Шаг 3: Файловые системы
 echo -e "\n\033[1;32m[3/13] Создание ФС\033[0m"
-mkfs.fat -F32 ${DISK}1
-mkswap ${DISK}2
-swapon ${DISK}2
-mkfs.ext4 ${DISK}3
+mkfs.fat -F32 ${DISK}1 || exit 1
+mkswap ${DISK}2 || exit 1
+swapon ${DISK}2 || exit 1
+mkfs.ext4 ${DISK}3 || exit 1
 
 # Шаг 4: Монтирование
 echo -e "\n\033[1;32m[4/13] Монтирование\033[0m"
-mount ${DISK}3 /mnt/gentoo
+mkdir -p /mnt/gentoo
+mount ${DISK}3 /mnt/gentoo || exit 1
 mkdir -p /mnt/gentoo/boot/efi
-mount ${DISK}1 /mnt/gentoo/boot/efi
+mount ${DISK}1 /mnt/gentoo/boot/efi || exit 1
 
 # Шаг 5: Stage3 (исправленный URL)
 echo -e "\n\033[1;32m[5/13] Загрузка Stage3\033[0m"
+cd /mnt/gentoo
 STAGE3_FULL_URL="${MIRROR}/${STAGE3_PATH}"
-wget -qO- ${STAGE3_FULL_URL} | grep -v ^# | awk '{print $1}' | head -1 | {
-  read -r url
-  wget "${MIRROR}/releases/amd64/autobuilds/${url}" -O stage3.tar.xz
-  tar xpvf stage3.tar.xz -C /mnt/gentoo --xattrs-include='*.*' --numeric-owner
+LATEST_STAGE3=$(wget -qO- ${STAGE3_FULL_URL} | grep -v ^# | awk '{print $1}' | head -1)
+wget "${MIRROR}/releases/amd64/autobuilds/${LATEST_STAGE3}" -O stage3.tar.xz || {
+  echo "Ошибка загрузки Stage3!"
+  exit 1
+}
+tar xpvf stage3.tar.xz --xattrs-include='*.*' --numeric-owner || {
+  echo "Ошибка распаковки Stage3!"
+  exit 1
 }
 
 # Шаг 6: Chroot
 echo -e "\n\033[1;32m[6/13] Настройка chroot\033[0m"
-cp /etc/resolv.conf /mnt/gentoo/etc/
+cp /etc/resolv.conf /mnt/gentoo/etc/ || exit 1
 mount --types proc /proc /mnt/gentoo/proc
 mount --rbind /sys /mnt/gentoo/sys
 mount --make-rslave /mnt/gentoo/sys
@@ -73,69 +91,80 @@ export PS1="(chroot) $PS1"
 
 # Обновление Portage
 eselect news read
-emerge-webrsync
+emerge-webrsync || exit 1
 
 # Профиль Systemd
 eselect profile list
 read -p "Номер профиля Systemd: " PROFILE_NUM
-eselect profile set ${PROFILE_NUM}
+eselect profile set ${PROFILE_NUM} || exit 1
 
 # Обновление системы
-emerge --ask --verbose --update --deep --newuse @world
+emerge --ask --verbose --update --deep --newuse @world || exit 1
 EOL
 
-# Шаг 8: Ядро (добавлена компиляция)
+# Шаг 8: Ядро (исправленная версия)
 echo -e "\n\033[1;32m[8/13] Установка ядра\033[0m"
 confirm "Установить и скомпилировать ядро?" && {
-  chroot /mnt/gentoo emerge sys-kernel/gentoo-sources sys-kernel/linux-firmware
   chroot /mnt/gentoo /bin/bash <<'EOL'
+  emerge sys-kernel/gentoo-sources sys-kernel/linux-firmware || exit 1
   cd /usr/src/linux
-  make defconfig
-  make -j$(nproc)
-  make modules_install
-  make install
-  emerge sys-kernel/dracut
-  dracut --host-only -k /boot/initramfs-$(uname -r).img $(uname -r)
+  make defconfig || exit 1
+  make -j$(nproc) || exit 1
+  make modules_install || exit 1
+  make install || exit 1
+  KERNEL_VERSION=$(ls -t /usr/src/linux-* | head -n1 | sed 's/.*linux-//')
+  emerge sys-kernel/dracut || exit 1
+  dracut --host-only -k "/boot/initramfs-${KERNEL_VERSION}.img" "${KERNEL_VERSION}" || exit 1
 EOL
 }
 
 # Шаг 9: Fstab
 echo -e "\n\033[1;32m[9/13] Генерация fstab\033[0m"
-genfstab -U /mnt/gentoo >> /mnt/gentoo/etc/fstab
+genfstab -U /mnt/gentoo >> /mnt/gentoo/etc/fstab || exit 1
 
-# Шаг 10: Загрузчик (исправленные пути)
+# Шаг 10: Загрузчик (исправленная версия)
 echo -e "\n\033[1;32m[10/13] Установка загрузчика\033[0m"
-chroot /mnt/gentoo bootctl install
-KERNEL_VERSION=$(ls /mnt/gentoo/boot | grep vmlinuz | cut -d'-' -f2-)
-UUID=$(blkid -s UUID -o value ${DISK}3)
-cat <<EOF > /mnt/gentoo/boot/loader/entries/gentoo.conf
+chroot /mnt/gentoo /bin/bash <<'EOL'
+bootctl install || exit 1
+KERNEL_VERSION=$(ls -t /boot/vmlinuz-* | head -n1 | sed 's/.*vmlinuz-//')
+UUID=$(blkid -s UUID -o value /dev/sda3)
+cat <<EOF > /boot/loader/entries/gentoo.conf
 title Gentoo Linux
 linux /vmlinuz-${KERNEL_VERSION}
 initrd /initramfs-${KERNEL_VERSION}.img
 options root=UUID=${UUID} rw
 EOF
+EOL
 
 # Шаг 11: Локализация
 echo -e "\n\033[1;32m[11/13] Настройка локали\033[0m"
 chroot /mnt/gentoo /bin/bash <<'EOL'
-ln -sf /usr/share/zoneinfo/Europe/Moscow /etc/localtime
-echo "en_US.UTF-8 UTF-8" >> /etc/locale.gen
-locale-gen
+ln -sf /usr/share/zoneinfo/Europe/Moscow /etc/localtime || exit 1
+echo "en_US.UTF-8 UTF-8" >> /etc/locale.gen || exit 1
+locale-gen || exit 1
 EOL
 
-# Шаг 12: Пользователь (добавлен sudo)
+# Шаг 12: Пользователь (добавлены проверки)
 echo -e "\n\033[1;32m[12/13] Создание пользователя\033[0m"
 read -p "Имя пользователя: " USERNAME
-chroot /mnt/gentoo useradd -m -G wheel,users,audio,video -s /bin/bash ${USERNAME}
-chroot /mnt/gentoo passwd ${USERNAME}
-chroot /mnt/gentoo emerge app-admin/sudo
-echo "%wheel ALL=(ALL) ALL" >> /mnt/gentoo/etc/sudoers
+chroot /mnt/gentoo /bin/bash <<EOL
+if id "${USERNAME}" &>/dev/null; then
+  echo "Пользователь ${USERNAME} уже существует!"
+  exit 1
+fi
+useradd -m -G wheel,users,audio,video -s /bin/bash ${USERNAME} || exit 1
+passwd ${USERNAME} || exit 1
+emerge app-admin/sudo || exit 1
+echo "%wheel ALL=(ALL) ALL" >> /etc/sudoers || exit 1
+EOL
 
 # Шаг 13: Графическое окружение
 echo -e "\n\033[1;32m[13/13] Установка bspwm\033[0m"
 confirm "Установить графическое окружение?" && {
-  chroot /mnt/gentoo emerge xorg-server bspwm sxhkd alacritty lightdm
-  chroot /mnt/gentoo systemctl enable lightdm
+  chroot /mnt/gentoo /bin/bash <<'EOL'
+  emerge xorg-server bspwm sxhkd alacritty lightdm || exit 1
+  systemctl enable lightdm || exit 1
+EOL
 }
 
-echo -e "\n\033[1;32mУстановка завершена! Перезагрузитесь командой: reboot\033[0m"
+echo -e "\n\033[1;32mУстановка завершена! Перезагрузитесь командой: umount -R /mnt/gentoo && reboot\033[0m"
