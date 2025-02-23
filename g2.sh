@@ -97,6 +97,7 @@ echo "min=1,1,1,1,1" > /etc/security/passwdqc.conf
 echo "halaxygentoo" > /etc/hostname
 emerge -av systemd-networkd
 systemctl enable systemd-networkd systemd-resolved
+cp -r /etc/systemd/network /mnt/etc/systemd/network
 ln -sf /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf
 
 # Установка ядра и генерация initramfs
@@ -113,7 +114,7 @@ options root=${DISK}3 rw" > /boot/loader/entries/gentoo.conf
 
 # Установка Xorg и bspwm
 echo "Установка Xorg и bspwm..."
-emerge -av xorg-server xorg-xinit bspwm sxhkd dmenu alacritty
+emerge -av xorg-server xorg-xinit bspwm sxhkd dmenu alacritty nvidia-drivers
 mkdir -p /home/ervin
 echo "exec bspwm" > /home/ervin/.xinitrc
 chown ervin:ervin /home/ervin/.xinitrc
