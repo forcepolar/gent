@@ -1,139 +1,94 @@
 #!/bin/bash
 set -e
 
-# Проверка, что скрипт запущен от root
-if [ "$(id -u)" -ne 0 ]; then
-    echo "Этот скрипт должен быть запущен от root"
-    exit 1
+# Configuration
+MIRROR="https://mirror.yandex.ru/gentoo-distfiles"
+STAGE3_PATH="releases/amd64/autobuilds/latest-stage3-amd64-systemd.txt"
+
+# Check root and dependencies
+if [ "$EUID" -ne 0 ]; then
+  echo "Run the script as root!"
+  exit 1
 fi
 
-# Функция для запроса подтверждения
-yes_no() {
-    while true; do
-        read -p "$1 (Y/n): " choice
-        case "$choice" in
-            Y|y|"") return 0 ;;
-            N|n) return 1 ;;
-            *) echo "Пожалуйста, введите Y или n" ;;
-        esac
-    done
+for cmd in parted wget tar chroot; do
+  if ! command -v $cmd &> /dev/null; then
+    echo "Error: $cmd not installed!"
+    exit 1
+  fi
+done
+
+# Confirmation function
+confirm() {
+  read -p "$1 (Y/n): " -n 1 -r
+  echo
+  [[ $REPLY =~ ^[Yy]$ ]] || exit 1
 }
 
-# Настройка времени
-echo "Настройка времени..."
-timedatectl set-ntp true
-
-# Разметка диска
-lsblk
-read -p "Введите диск для установки (по умолчанию /dev/sdb): " DISK
-if [ -z "$DISK" ]; then
-    DISK="/dev/sdb"
-fi
-
-if yes_no "Разметить диск автоматически?"; then
-    parted "$DISK" mklabel gpt
-    parted "$DISK" mkpart ESP fat32 1MiB 512MiB
-    parted "$DISK" set 1 boot on
-    parted "$DISK" mkpart primary linux-swap 512MiB 4.5GiB
-    parted "$DISK" mkpart primary ext4 4.5GiB 100%
-
-    mkfs.fat -F32 "${DISK}1"
-    mkswap "${DISK}2" && swapon "${DISK}2"
-    mkfs.ext4 "${DISK}3"
-fi
-
-# Монтирование разделов
-mount "${DISK}3" /mnt
-mkdir -p /mnt/boot
-mount "${DISK}1" /mnt/boot
-
-# Загрузка Stage3
-cd /mnt
-STAGE3_FILE="stage3-amd64-systemd-latest.tar.xz"
-echo "Загрузка $STAGE3_FILE..."
-curl -O "https://mirror.yandex.ru/gentoo-distfiles/$STAGE3_FILE"
-tar xpvf "$STAGE3_FILE" --xattrs-include='*.*' --numeric-owner
-
-# Настройка chroot
-cp -L /etc/resolv.conf /mnt/etc/
-mount -t proc /proc /mnt/proc
-mount --rbind /sys /mnt/sys
-mount --rbind /dev /mnt/dev
-
-# Передача переменной DISK внутрь chroot
-echo "DISK=${DISK}" > /mnt/root/install_disk
-
-# Вход в chroot и выполнение дальнейшей установки
-chroot /mnt /bin/bash <<'EOF'
-source /etc/profile
-export PS1="(chroot) \$PS1"
-
-# Импорт переменной DISK
-if [ -f /root/install_disk ]; then
-    source /root/install_disk
-else
-    echo "Не удалось импортировать переменную DISK"
+# Step 1: Network setup
+echo -e "\n\033[1;32m[1/13] Network setup\033[0m"
+confirm "Set up wired connection (dhcpcd)?" && {
+  dhcpcd || {
+    echo "Error setting up network!"
     exit 1
+  }
+}
+
+# Step 2: Disk partitioning
+echo -e "\n\033[1;32m[2/13] Disk partitioning\033[0m"
+lsblk
+read -p "Enter disk for installation (e.g. /dev/sda): " DISK
+confirm "Partition disk ${DISK}? ALL DATA WILL BE DELETED!" && {
+  parted ${DISK} mklabel gpt
+  parted ${DISK} mkpart ESP fat32 1MiB 513MiB
+  parted ${DISK} set 1 esp on
+  parted ${DISK} mkpart primary linux-swap 513MiB 4.5GiB
+  parted ${DISK} mkpart primary ext4 4.5GiB 100%
+}
+
+# Step 3: File systems
+echo -e "\n\033[1;32m[3/13] Creating file systems\033[0m"
+mkfs.fat -F32 ${DISK}1 || exit 1
+mkswap ${DISK}2 || exit 1
+swapon ${DISK}2 || exit 1
+mkfs.ext4 ${DISK}3 || exit 1
+
+# Step 4: Mounting
+echo -e "\n\033[1;32m[4/13] Mounting\033[0m"
+mkdir -p /mnt/gentoo
+mount ${DISK}3 /mnt/gentoo || exit 1
+mkdir -p /mnt/gentoo/boot/efi
+mount ${DISK}1 /mnt/gentoo/boot/efi || exit 1
+
+# Step 5: Stage3 (updated URL)
+echo -e "\n\033[1;32m[5/13] Downloading Stage3\033[0m"
+cd /mnt/gentoo
+STAGE3_FULL_URL="${MIRROR}/${STAGE3_PATH}"
+LATEST_STAGE3=$(wget -qO- ${STAGE3_FULL_URL} | grep -v ^# | awk '{print $1}' | head -1)
+wget "${MIRROR}/releases/amd64/autobuilds/${LATEST_STAGE3}" -O stage3.tar.xz || {
+  echo "Error downloading Stage3!"
+  exit 1
+}
+tar xpvf stage3.tar.xz --xattrs-include='*.*' --numeric-owner || {
+  echo "Error extracting Stage3!"
+  exit 1
+}
+
+# Step 6: Copying network settings
+echo -e "\n\033[1;32m[6/13] Copying network settings\033[0m"
+cp /etc/resolv.conf /mnt/gentoo/etc/ || exit 1
+if [ -f /etc/NetworkManager/system-connections ]; then
+  mkdir -p /mnt/gentoo/etc/NetworkManager/
+  cp -r /etc/NetworkManager/system-connections /mnt/gentoo/etc/NetworkManager/ || exit 1
 fi
 
-# Обновление портежей и системы
-emerge-webrsync
-emerge --sync
-emerge -avuDN @world
+# Step 7: Chroot
+echo -e "\n\033[1;32m[7/13] Chroot\033[0m"
+mount --types proc /proc /mnt/gentoo/proc
+mount --rbind /sys /mnt/gentoo/sys
+mount --make-rslave /mnt/gentoo/sys
+mount --rbind /dev /mnt/gentoo/dev
+mount --make-rslave /mnt/gentoo/dev
 
-# Настройка времени и локали
-ln -sf /usr/share/zoneinfo/UTC /etc/localtime
-echo "UTC" > /etc/timezone
-emerge --config sys-libs/timezone-data
-
-echo "en_US.UTF-8 UTF-8" > /etc/locale.gen
-locale-gen
-echo 'LANG="en_US.UTF-8"' > /etc/locale.conf
-
-# Настройка безопасности паролей
-echo "min=1,1,1,1,1" > /etc/security/passwdqc.conf
-
-# Настройка hostname и сети
-echo "halaxygentoo" > /etc/hostname
-emerge -av systemd-networkd
-systemctl enable systemd-networkd systemd-resolved
-cp -r /etc/systemd/network /mnt/etc/systemd/network
-ln -sf /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf
-
-# Установка ядра и генерация initramfs
-emerge -av gentoo-kernel-bin
-emerge -av dracut
-dracut --force
-
-# Установка загрузчика systemd-boot
-bootctl install
-echo -e "title Gentoo Linux
-linux /vmlinuz
-initrd /boot/initramfs
-options root=${DISK}3 rw" > /boot/loader/entries/gentoo.conf
-
-# Установка Xorg и bspwm
-echo "Установка Xorg и bspwm..."
-emerge -av xorg-server xorg-xinit bspwm sxhkd dmenu alacritty nvidia-drivers
-mkdir -p /home/ervin
-echo "exec bspwm" > /home/ervin/.xinitrc
-chown ervin:ervin /home/ervin/.xinitrc
-
-# Установка пароля для root
-passwd
-
-# Установка пользователя ervin
-useradd -m -G wheel -s /bin/bash ervin
-passwd ervin
-echo "%wheel ALL=(ALL) ALL" >> /etc/sudoers
-
-exit
-EOF
-
-# Завершение установки
-umount -l /mnt/boot
-umount -l /mnt/sys
-umount -l /mnt/proc
-umount -l /mnt/dev
-swapoff "${DISK}2"
-reboot
+# Step 8: System setup
+echo -e "\n\033[1;32m[8/13] Basic setup\033[0m
