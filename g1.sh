@@ -1,44 +1,39 @@
 #!/bin/bash
 set -e
 
-# Konfiguratsiya
+# Configuration
 MIRROR="https://mirror.yandex.ru/gentoo-distfiles"
-STAGE3_URL="https://mirror.yandex.ru/gentoo-distfiles/releases/amd64/autobuilds/current-stage3-amd64-desktop-systemd/stage3-amd64-desktop-systemd-20250216T164837Z.tar.xz"
+STAGE3_INDEX_URL="$MIRROR/releases/amd64/autobuilds/latest-stage3-amd64-desktop-systemd.txt"
 
-# Proverka root i zavisimostey
+# Check root and dependencies
 if [ "$EUID" -ne 0 ]; then
-  echo "Zapustite skript ot root!"
+  echo "Run the script as root!"
   exit 1
 fi
 
 for cmd in parted wget tar chroot; do
   if ! command -v $cmd &> /dev/null; then
-    echo "Oshibka: $cmd ne ustanovlen!"
+    echo "Error: $cmd not installed!"
     exit 1
   fi
 done
 
-# Funktsiya podtverzhdeniya
-confirm() {
+# Confirmation function
+affirm() {
   read -p "$1 (Y/n): " -n 1 -r
   echo
   [[ $REPLY =~ ^[Yy]$ ]] || exit 1
 }
 
-# Shag 1: Nastroyka seti
-echo -e "\n\033[1;32m[1/13] Nastroyka seti\033[0m"
-confirm "Nastroyti provodnoe podklyuchenie (dhcpcd)?" && {
-  dhcpcd || {
-    echo "Oshibka nastroyki seti!"
-    exit 1
-  }
-}
+# Step 1: Network setup
+echo -e "\n\033[1;32m[1/13] Network setup\033[0m"
+affirm "Set up wired connection (dhcpcd)?" && dhcpcd
 
-# Shag 2: Razmetka diska
-echo -e "\n\033[1;32m[2/13] Razmetka diska\033[0m"
+# Step 2: Disk partitioning
+echo -e "\n\033[1;32m[2/13] Disk partitioning\033[0m"
 lsblk
-read -p "Ukazhite disk dlya ustanovki (naprimer /dev/sda): " DISK
-confirm "Razmetit disk ${DISK}? VSE DANNYE BUDUT UDALeny!" && {
+read -p "Enter disk for installation (e.g. /dev/sda): " DISK
+affirm "Partition disk ${DISK}? ALL DATA WILL BE DELETED!" && {
   parted ${DISK} mklabel gpt
   parted ${DISK} mkpart ESP fat32 1MiB 513MiB
   parted ${DISK} set 1 esp on
@@ -46,41 +41,54 @@ confirm "Razmetit disk ${DISK}? VSE DANNYE BUDUT UDALeny!" && {
   parted ${DISK} mkpart primary ext4 4.5GiB 100%
 }
 
-# Shag 3: Faylovye sistemy
-echo -e "\n\033[1;32m[3/13] Sozdaniye FS\033[0m"
-mkfs.fat -F32 ${DISK}1 || exit 1
-mkswap ${DISK}2 || exit 1
-swapon ${DISK}2 || exit 1
-mkfs.ext4 ${DISK}3 || exit 1
+# Step 3: File systems
+echo -e "\n\033[1;32m[3/13] Creating file systems\033[0m"
+mkfs.fat -F32 ${DISK}1
+mkswap ${DISK}2 && swapon ${DISK}2
+mkfs.ext4 ${DISK}3
 
-# Shag 4: Montirovaniye
-echo -e "\n\033[1;32m[4/13] Montirovaniye\033[0m"
+# Step 4: Mounting
+echo -e "\n\033[1;32m[4/13] Mounting\033[0m"
 mkdir -p /mnt/gentoo
-mount ${DISK}3 /mnt/gentoo || exit 1
+mount ${DISK}3 /mnt/gentoo
 mkdir -p /mnt/gentoo/boot/efi
-mount ${DISK}1 /mnt/gentoo/boot/efi || exit 1
+mount ${DISK}1 /mnt/gentoo/boot/efi
 
-# Shag 5: Stage3 (ispravlenniy URL)
-echo -e "\n\033[1;32m[5/13] Zagruzka Stage3\033[0m"
+# Step 5: Downloading Stage3 (automatic latest version fetch)
+echo -e "\n\033[1;32m[5/13] Downloading Stage3\033[0m"
 cd /mnt/gentoo
-STAGE3_FULL_URL="${MIRROR}/${STAGE3_PATH}"
-LATEST_STAGE3=$(wget -qO- ${STAGE3_FULL_URL} | grep -v ^# | awk '{print $1}' | head -1)
-wget "${MIRROR}/releases/amd64/autobuilds/${LATEST_STAGE3}" -O stage3.tar.xz || {
-  echo "Oshibka zagruzki Stage3!"
-  exit 1
-}
-tar xpvf stage3.tar.xz --xattrs-include='*.*' --numeric-owner || {
-  echo "Oshibka raspakovki Stage3!"
-  exit 1
-}
+LATEST_STAGE3=$(wget -qO- "$STAGE3_INDEX_URL" | grep -v '^#' | awk '{print $1}' | head -1)
 
-# Shag 6: Kopirovaniye nastroyek seti
-echo -e "\n\033[1;32m[6/13] Kopirovaniye nastroyek seti\033[0m"
-cp /etc/resolv.conf /mnt/gentoo/etc/ || exit 1
-if [ -f /etc/NetworkManager/system-connections ]; then
-  mkdir -p /mnt/gentoo/etc/NetworkManager/
-  cp -r /etc/NetworkManager/system-connections /mnt/gentoo/etc/NetworkManager/ || exit 1
+if [ -z "$LATEST_STAGE3" ]; then
+  echo "Error: Failed to fetch latest Stage3!"
+  exit 1
 fi
 
-# Shag 7: Chroot
-echo -e "\n\033[1;32m[
+STAGE3_FULL_URL="$MIRROR/releases/amd64/autobuilds/$LATEST_STAGE3"
+echo "Downloading: $STAGE3_FULL_URL"
+
+wget -O stage3.tar.xz "$STAGE3_FULL_URL" || {
+  echo "Error downloading Stage3!"
+  exit 1
+}
+
+tar xpvf stage3.tar.xz --xattrs-include='*.*' --numeric-owner || {
+  echo "Error extracting Stage3!"
+  exit 1
+}
+
+# Step 6: Copying network settings
+echo -e "\n\033[1;32m[6/13] Copying network settings\033[0m"
+cp /etc/resolv.conf /mnt/gentoo/etc/
+if [ -d /etc/NetworkManager/system-connections ]; then
+  mkdir -p /mnt/gentoo/etc/NetworkManager/
+  cp -r /etc/NetworkManager/system-connections /mnt/gentoo/etc/NetworkManager/
+fi
+
+# Step 7: Chroot
+echo -e "\n\033[1;32m[7/13] Entering chroot\033[0m"
+mount -t proc /proc /mnt/gentoo/proc
+mount --rbind /sys /mnt/gentoo/sys
+mount --rbind /dev /mnt/gentoo/dev
+
+chroot /mnt/gentoo /bin/bash
