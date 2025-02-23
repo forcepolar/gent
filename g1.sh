@@ -3,7 +3,7 @@ set -e
 
 # Configuration
 MIRROR="https://mirrors.mit.edu/gentoo-distfiles"
-STAGE3_INDEX_URL="$MIRROR/releases/amd64/autobuilds/latest-stage3-amd64-desktop-systemd.txt"
+STAGE3_INDEX_URL="$MIRROR/releases/amd64/autobuilds/latest-stage3-amd64-systemd.txt"
 
 # Check root and dependencies
 if [ "$EUID" -ne 0 ]; then
