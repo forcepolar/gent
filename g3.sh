@@ -37,12 +37,21 @@ mount "${DISK}3" /mnt
 mkdir -p /mnt/boot
 mount "${DISK}1" /mnt/boot
 
-# Zagruska Stage3
+# Step: Download Stage3
 cd /mnt
-STAGE3_FILE="stage3-amd64-systemd-latest.tar.xz"
-echo "Zagruska $STAGE3_FILE..."
-curl -O "https://mirror.yandex.ru/gentoo-distfiles/$STAGE3_FILE"
-tar xpvf "$STAGE3_FILE" --xattrs-include='*.*' --numeric-owner
+STAGE3_FILE="stage3-amd64-desktop-systemd-20250216T164837Z.tar.xz"
+STAGE3_URL="https://mirror.yandex.ru/gentoo-distfiles/releases/amd64/autobuilds/current-stage3-amd64-desktop-systemd/$STAGE3_FILE"
+
+echo "Downloading $STAGE3_FILE..."
+curl -O "$STAGE3_URL" || {
+  echo "Error downloading Stage3!"
+  exit 1
+}
+
+tar xpvf "$STAGE3_FILE" --xattrs-include='*.*' --numeric-owner || {
+  echo "Error extracting Stage3!"
+  exit 1
+}
 
 # Nastroika chroot
 cp -L /etc/resolv.conf /mnt/etc/
