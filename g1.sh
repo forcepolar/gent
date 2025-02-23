@@ -2,8 +2,9 @@
 set -e
 
 # Configuration
-MIRROR="https://mirrors.mit.edu/gentoo-distfiles"
-STAGE3_INDEX_URL="$MIRROR/releases/amd64/autobuilds/latest-stage3-amd64-systemd.txt"
+cd /mnt
+STAGE3_FILE="stage3-amd64-desktop-systemd-20250216T164837Z.tar.xz"
+STAGE3_URL="https://mirror.yandex.ru/gentoo-distfiles/releases/amd64/autobuilds/current-stage3-amd64-desktop-systemd/$STAGE3_FILE"
 
 # Check root and dependencies
 if [ "$EUID" -ne 0 ]; then
