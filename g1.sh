@@ -74,17 +74,24 @@ tar xpvf stage3.tar.xz --xattrs-include='*.*' --numeric-owner || {
   exit 1
 }
 
-# Шаг 6: Chroot
-echo -e "\n\033[1;32m[6/13] Настройка chroot\033[0m"
+# Шаг 6: Копирование настроек сети
+echo -e "\n\033[1;32m[6/13] Копирование настроек сети\033[0m"
 cp /etc/resolv.conf /mnt/gentoo/etc/ || exit 1
+if [ -f /etc/NetworkManager/system-connections ]; then
+  mkdir -p /mnt/gentoo/etc/NetworkManager/
+  cp -r /etc/NetworkManager/system-connections /mnt/gentoo/etc/NetworkManager/ || exit 1
+fi
+
+# Шаг 7: Chroot
+echo -e "\n\033[1;32m[7/13] Настройка chroot\033[0m"
 mount --types proc /proc /mnt/gentoo/proc
 mount --rbind /sys /mnt/gentoo/sys
 mount --make-rslave /mnt/gentoo/sys
 mount --rbind /dev /mnt/gentoo/dev
 mount --make-rslave /mnt/gentoo/dev
 
-# Шаг 7: Настройка системы
-echo -e "\n\033[1;32m[7/13] Базовая настройка\033[0m"
+# Шаг 8: Настройка системы
+echo -e "\n\033[1;32m[8/13] Базовая настройка\033[0m"
 chroot /mnt/gentoo /bin/bash <<'EOL'
 source /etc/profile
 export PS1="(chroot) $PS1"
@@ -102,8 +109,8 @@ eselect profile set ${PROFILE_NUM} || exit 1
 emerge --ask --verbose --update --deep --newuse @world || exit 1
 EOL
 
-# Шаг 8: Ядро (исправленная версия)
-echo -e "\n\033[1;32m[8/13] Установка ядра\033[0m"
+# Шаг 9: Ядро (исправленная версия)
+echo -e "\n\033[1;32m[9/13] Установка ядра\033[0m"
 confirm "Установить и скомпилировать ядро?" && {
   chroot /mnt/gentoo /bin/bash <<'EOL'
   emerge sys-kernel/gentoo-sources sys-kernel/linux-firmware || exit 1
@@ -118,12 +125,12 @@ confirm "Установить и скомпилировать ядро?" && {
 EOL
 }
 
-# Шаг 9: Fstab
-echo -e "\n\033[1;32m[9/13] Генерация fstab\033[0m"
+# Шаг 10: Fstab
+echo -e "\n\033[1;32m[10/13] Генерация fstab\033[0m"
 genfstab -U /mnt/gentoo >> /mnt/gentoo/etc/fstab || exit 1
 
-# Шаг 10: Загрузчик (исправленная версия)
-echo -e "\n\033[1;32m[10/13] Установка загрузчика\033[0m"
+# Шаг 11: Загрузчик (исправленная версия)
+echo -e "\n\033[1;32m[11/13] Установка загрузчика\033[0m"
 chroot /mnt/gentoo /bin/bash <<'EOL'
 bootctl install || exit 1
 KERNEL_VERSION=$(ls -t /boot/vmlinuz-* | head -n1 | sed 's/.*vmlinuz-//')
@@ -136,27 +143,15 @@ options root=UUID=${UUID} rw
 EOF
 EOL
 
-# Шаг 11: Локализация
-echo -e "\n\033[1;32m[11/13] Настройка локали\033[0m"
-chroot /mnt/gentoo /bin/bash <<'EOL'
-ln -sf /usr/share/zoneinfo/Europe/Moscow /etc/localtime || exit 1
-echo "en_US.UTF-8 UTF-8" >> /etc/locale.gen || exit 1
-locale-gen || exit 1
+# Шаг 12: Установка драйверов NVIDIA
+echo -e "\n\033[1;32m[12/13] Установка драйверов NVIDIA\033[0m"
+confirm "Установить драйверы NVIDIA?" && {
+  chroot /mnt/gentoo /bin/bash <<'EOL'
+  emerge x11-drivers/nvidia-drivers || exit 1
+  echo "nvidia" >> /etc/modules-load.d/nvidia.conf || exit 1
+  echo "blacklist nouveau" >> /etc/modprobe.d/blacklist.conf || exit 1
 EOL
-
-# Шаг 12: Пользователь (добавлены проверки)
-echo -e "\n\033[1;32m[12/13] Создание пользователя\033[0m"
-read -p "Имя пользователя: " USERNAME
-chroot /mnt/gentoo /bin/bash <<EOL
-if id "${USERNAME}" &>/dev/null; then
-  echo "Пользователь ${USERNAME} уже существует!"
-  exit 1
-fi
-useradd -m -G wheel,users,audio,video -s /bin/bash ${USERNAME} || exit 1
-passwd ${USERNAME} || exit 1
-emerge app-admin/sudo || exit 1
-echo "%wheel ALL=(ALL) ALL" >> /etc/sudoers || exit 1
-EOL
+}
 
 # Шаг 13: Графическое окружение
 echo -e "\n\033[1;32m[13/13] Установка bspwm\033[0m"
