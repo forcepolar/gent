@@ -3,7 +3,7 @@ set -e
 
 # Konfiguratsiya
 MIRROR="https://mirror.yandex.ru/gentoo-distfiles"
-STAGE3_PATH="releases/amd64/autobuilds/latest-stage3-amd64-systemd.txt"
+STAGE3_URL="https://mirror.yandex.ru/gentoo-distfiles/releases/amd64/autobuilds/current-stage3-amd64-desktop-systemd/stage3-amd64-desktop-systemd-20250216T164837Z.tar.xz"
 
 # Proverka root i zavisimostey
 if [ "$EUID" -ne 0 ]; then
