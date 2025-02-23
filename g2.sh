@@ -90,8 +90,11 @@ echo "en_US.UTF-8 UTF-8" > /etc/locale.gen
 locale-gen
 echo 'LANG="en_US.UTF-8"' > /etc/locale.conf
 
+# Настройка безопасности паролей
+echo "min=1,1,1,1,1" > /etc/security/passwdqc.conf
+
 # Настройка hostname и сети
-echo "hostname=mygentoo" > /etc/hostname
+echo "halaxygentoo" > /etc/hostname
 emerge -av systemd-networkd
 systemctl enable systemd-networkd systemd-resolved
 ln -sf /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf
@@ -103,17 +106,24 @@ dracut --force
 
 # Установка загрузчика systemd-boot
 bootctl install
-echo -e "title Gentoo Linux\nlinux /vmlinuz\ninitrd /initramfs\noptions root=${DISK}3 rw" > /boot/loader/entries/gentoo.conf
+echo -e "title Gentoo Linux
+linux /vmlinuz
+initrd /boot/initramfs
+options root=${DISK}3 rw" > /boot/loader/entries/gentoo.conf
 
 # Установка Xorg и bspwm
 echo "Установка Xorg и bspwm..."
 emerge -av xorg-server xorg-xinit bspwm sxhkd dmenu alacritty
-echo "exec bspwm" > /root/.xinitrc
+mkdir -p /home/ervin
+echo "exec bspwm" > /home/ervin/.xinitrc
+chown ervin:ervin /home/ervin/.xinitrc
 
-# Установка паролей и создание пользователя
+# Установка пароля для root
 passwd
-useradd -m -G wheel -s /bin/bash user
-passwd user
+
+# Установка пользователя ervin
+useradd -m -G wheel -s /bin/bash ervin
+passwd ervin
 echo "%wheel ALL=(ALL) ALL" >> /etc/sudoers
 
 exit
@@ -124,4 +134,5 @@ umount -l /mnt/boot
 umount -l /mnt/sys
 umount -l /mnt/proc
 umount -l /mnt/dev
+swapoff "${DISK}2"
 reboot
