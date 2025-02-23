@@ -1,111 +1,112 @@
 #!/bin/bash
 set -e
 
-# Proverka, chto skript zapushchen ot root
-if [ "$(id -u)" -ne 0 ]; then
-    echo "Etot skript dolzhen byt' zapushchen ot root"
+# Configuration
+MIRROR="https://mirrors.mit.edu/gentoo-distfiles"
+STAGE3_INDEX_URL="$MIRROR/releases/amd64/autobuilds/latest-stage3-amd64-desktop-systemd.txt"
+
+# Check root and dependencies
+if [ "$EUID" -ne 0 ]; then
+  echo "Run the script as root!"
+  exit 1
+fi
+
+for cmd in parted wget tar chroot; do
+  if ! command -v $cmd &> /dev/null; then
+    echo "Error: $cmd not installed!"
     exit 1
+  fi
+done
+
+# Confirmation function
+affirm() {
+  read -p "$1 (Y/n): " -n 1 -r
+  echo
+  [[ $REPLY =~ ^[Yy]$ ]] || exit 1
+}
+
+# Step 1: Network setup
+echo -e "\n\033[1;32m[1/13] Network setup\033[0m"
+affirm "Set up wired connection (dhcpcd)?" && dhcpcd
+
+# Step 2: Disk partitioning
+echo -e "\n\033[1;32m[2/13] Disk partitioning\033[0m"
+lsblk
+read -p "Enter disk for installation (e.g. /dev/sda): " DISK
+affirm "Partition disk ${DISK}? ALL DATA WILL BE DELETED!" && {
+  parted ${DISK} mklabel gpt
+  parted ${DISK} mkpart ESP fat32 1MiB 513MiB
+  parted ${DISK} set 1 esp on
+  parted ${DISK} mkpart primary linux-swap 513MiB 4.5GiB
+  parted ${DISK} mkpart primary ext4 4.5GiB 100%
+}
+
+# Step 3: File systems
+echo -e "\n\033[1;32m[3/13] Creating file systems\033[0m"
+mkfs.fat -F32 ${DISK}1
+mkswap ${DISK}2 && swapon ${DISK}2
+mkfs.ext4 ${DISK}3
+
+# Step 4: Mounting
+echo -e "\n\033[1;32m[4/13] Mounting\033[0m"
+mkdir -p /mnt/gentoo
+mount ${DISK}3 /mnt/gentoo
+mkdir -p /mnt/gentoo/boot/efi
+mount ${DISK}1 /mnt/gentoo/boot/efi
+
+# Step 5: Downloading Stage3 (automatic latest version fetch)
+echo -e "\n\033[1;32m[5/13] Downloading Stage3\033[0m"
+cd /mnt/gentoo
+LATEST_STAGE3=$(wget -qO- "$STAGE3_INDEX_URL" | grep -v '^#' | awk '{print $1}' | head -1)
+
+if [ -z "$LATEST_STAGE3" ]; then
+  echo "Error: Failed to fetch latest Stage3!"
+  exit 1
 fi
 
-# Proverka nalichiya whiptail (esli net, ustanavlivaem dialog)
-if ! command -v whiptail &> /dev/null; then
-    echo "Ustanavlivaem dialog..."
-    pacman -Sy --noconfirm dialog
-    alias whiptail=dialog
-fi
+STAGE3_FULL_URL="$MIRROR/releases/amd64/autobuilds/$LATEST_STAGE3"
+echo "Downloading: $STAGE3_FULL_URL"
 
-# Vybor diska
-DISK=$(whiptail --inputbox "Vvedite disk dlya ustanovki (po umolchaniyu /dev/sdb):" 10 60 /dev/sdb 3>&1 1>&2 2>&3)
-if [ -z "$DISK" ]; then
-    DISK="/dev/sdb"
-fi
-
-# Podtverzhdenie razmetki diska
-if whiptail --yesno "Razmetit' disk avtonomno?" 10 60; then
-    parted "$DISK" mklabel gpt
-    parted "$DISK" mkpart ESP fat32 1MiB 512MiB
-    parted "$DISK" set 1 boot on
-    parted "$DISK" mkpart primary linux-swap 512MiB 4.5GiB
-    parted "$DISK" mkpart primary ext4 4.5GiB 100%
-    mkfs.fat -F32 "${DISK}1"
-    mkswap "${DISK}2" && swapon "${DISK}2"
-    mkfs.ext4 "${DISK}3"
-fi
-
-# Montirovanie razdelov
-mount "${DISK}3" /mnt
-mkdir -p /mnt/boot
-mount "${DISK}1" /mnt/boot
-
-# Step: Download Stage3
-cd /mnt
-STAGE3_FILE="stage3-amd64-desktop-systemd-20250216T164837Z.tar.xz"
-STAGE3_URL="https://mirror.yandex.ru/gentoo-distfiles/releases/amd64/autobuilds/current-stage3-amd64-desktop-systemd/$STAGE3_FILE"
-
-echo "Downloading $STAGE3_FILE..."
-curl -O "$STAGE3_URL" || {
+wget -O stage3.tar.xz "$STAGE3_FULL_URL" || {
   echo "Error downloading Stage3!"
   exit 1
 }
 
-tar xpvf "$STAGE3_FILE" --xattrs-include='*.*' --numeric-owner || {
+tar xpvf stage3.tar.xz --xattrs-include='*.*' --numeric-owner || {
   echo "Error extracting Stage3!"
   exit 1
 }
 
-# Nastroika chroot
-cp -L /etc/resolv.conf /mnt/etc/
-mount -t proc /proc /mnt/proc
-mount --rbind /sys /mnt/sys
-mount --rbind /dev /mnt/dev
-
-# Peredacha peremennoy DISK vnutr' chroot
-echo "DISK=${DISK}" > /mnt/root/install_disk
-
-# Vkhod v chroot i vypolnenie dal'neyshey ustanovki
-chroot /mnt /bin/bash <<'EOF'
-source /etc/profile
-export PS1="(chroot) \$PS1"
-
-# Import peremennoy DISK
-if [ -f /root/install_disk ]; then
-    source /root/install_disk
-else
-    echo "Ne udalos' importirovat' peremennuyu DISK"
-    exit 1
+# Step 6: Copying network settings
+echo -e "\n\033[1;32m[6/13] Copying network settings\033[0m"
+cp /etc/resolv.conf /mnt/gentoo/etc/
+mkdir -p /mnt/gentoo/etc/systemd/network  # Ensure the directory exists
+if [ -d /etc/NetworkManager/system-connections ]; then
+  mkdir -p /mnt/gentoo/etc/NetworkManager/
+  cp -r /etc/NetworkManager/system-connections /mnt/gentoo/etc/NetworkManager/
 fi
 
-# Obnovlenie portezev i sistemy
-emerge-webrsync
-emerge --sync
-emerge -avuDN @world
+# Step 7: Chroot
+echo -e "\n\033[1;32m[7/13] Entering chroot\033[0m"
+mount -t proc /proc /mnt/gentoo/proc
+mount --rbind /sys /mnt/gentoo/sys
+mount --rbind /dev /mnt/gentoo/dev
 
-# Nastroika vremeni i lokaley
-ln -sf /usr/share/zoneinfo/UTC /etc/localtime
-echo "UTC" > /etc/timezone
-emerge --config sys-libs/timezone-data
+chroot /mnt/gentoo /bin/bash -c "
+  source /etc/profile
+  export PS1='(chroot) \w\$ '
 
-echo "en_US.UTF-8 UTF-8" > /etc/locale.gen
-locale-gen
-echo 'LANG="en_US.UTF-8"' > /etc/locale.conf
+  echo -e '\n\033[1;32m[8/13] Syncing Gentoo repository\033[0m'
+  emerge-webrsync
 
-# Nastroika bezopasnosti paroly
-echo "min=1,1,1,1,1" > /etc/security/passwdqc.conf
+  echo -e '\n\033[1;32m[9/13] Installing required tools\033[0m'
+  emerge -q sys-devel/make sys-kernel/gentoo-sources sys-apps/util-linux
 
-# Nastroika hostname i seti
-echo "halaxygentoo" > /etc/hostname
-emerge -av systemd-networkd
-systemctl enable systemd-networkd systemd-resolved
-cp -r /etc/systemd/network /mnt/etc/systemd/network
-ln -sf /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf
-
-# Ustanovka i kompilyatsiya yadra
-emerge -av sys-kernel/gentoo-sources
-cd /usr/src/linux
-make menuconfig
-make -j$(nproc)
-make modules_install
-make install
-
-# Vybor zagruzchika
-if whiptail --yesno "Khotite ispol'zovat' GRUB vmesto systemd-boot?" 10 60
+  echo -e '\n\033[1;32m[10/13] Configuring kernel\033[0m'
+  if [ -d /usr/src/linux ]; then
+    cd /usr/src/linux
+    make menuconfig || echo 'Warning: menuconfig failed, check kernel sources.'
+  else
+    echo 'Error: Kernel sources not found!'
+  fi
+"
