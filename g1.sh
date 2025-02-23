@@ -2,7 +2,7 @@
 set -e
 
 # Configuration
-MIRROR="https://mirror.yandex.ru/gentoo-distfiles"
+MIRROR="https://mirrors.mit.edu/gentoo-distfiles"
 STAGE3_INDEX_URL="$MIRROR/releases/amd64/autobuilds/latest-stage3-amd64-desktop-systemd.txt"
 
 # Check root and dependencies
