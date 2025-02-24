@@ -8,13 +8,18 @@ STAGE3_URL="https://mirror.yandex.ru/gentoo-distfiles/releases/amd64/autobuilds/
 
 # Proverka root i zavisimostey
 if [ "$EUID" -ne 0 ]; then
-echo "Zapustite skript ot imeni root!"
-exit 1
+    echo "Zapustite skript ot imeni root!"
+    exit 1
 fi
 
 # Funktsiya podtverzhdeniya
 affirm() {
-read -p "1(Y/n):"−n1−recho[[REPLY =~ ^[Yy]$ ]] || exit 1
+    local prompt="$1"
+    read -n 1 -r -p "$prompt (Y/n): " REPLY
+    echo
+    if ! [[ $REPLY =~ ^[Yy]$ || -z $REPLY ]]; then
+        exit 1
+    fi
 }
 
 # Shag 1: Nastroyka seti
@@ -25,40 +30,45 @@ affirm "Nastroyte provodnoe soedinenie (dhcpcd)?" && dhcpcd
 echo -e "\n\033[1;32m[2/13] Razdelenie diska\033[0m"
 lsblk
 read -p "Vvedite disk dlya ustanovki (naprimer, /dev/sda): " DISK
-affirm "Razdelit disk {DISK}? VSE DANNYE BUDUT UDALeny!" && {
-  parted {DISK} mklabel gpt
-parted DISKmkpartESPfat321MiB513MiBparted{DISK} set 1 esp on
-parted DISKmkpartprimarylinux−swap513MiB4.5GiBparted{DISK} mkpart primary ext4 4.5GiB 100%
+affirm "Razdelit disk $DISK? VSE DANNYE BUDUT UDALeny!" && {
+    parted "$DISK" mklabel gpt
+    parted "$DISK" mkpart ESP fat32 1MiB 513MiB
+    parted "$DISK" set 1 esp on
+    parted "$DISK" mkpart primary linux-swap 513MiB 4.5GiB
+    parted "$DISK" mkpart primary ext4 4.5GiB 100%
 }
 
 # Shag 3: Sozdanie faylovih sistem
 echo -e "\n\033[1;32m[3/13] Sozdanie faylovih sistem\033[0m"
-mkfs.fat -F32 DISK1mkswap{DISK}2 && swapon DISK2mkfs.ext4{DISK}3
+mkfs.fat -F32 "${DISK}1"
+mkswap "${DISK}2" && swapon "${DISK}2"
+mkfs.ext4 "${DISK}3"
 
 # Shag 4: Montirovanie
 echo -e "\n\033[1;32m[4/13] Montirovanie\033[0m"
 mkdir -p /mnt/gentoo
-mount DISK3/mnt/gentoomkdir−p/mnt/gentoo/boot/efimount{DISK}1 /mnt/gentoo/boot/efi
+mount "${DISK}3" /mnt/gentoo
+mkdir -p /mnt/gentoo/boot/efi
+mount "${DISK}1" /mnt/gentoo/boot/efi
 
 # Shag 5: Zagruzka Stage3
 echo -e "\n\033[1;32m[5/13] Zagruzka Stage3\033[0m"
 cd /mnt/gentoo
 wget -O stage3.tar.xz "$STAGE3_URL" || {
-echo "Oshibka pri zagruzke Stage3!"
-exit 1
+    echo "Oshibka pri zagruzke Stage3!"
+    exit 1
 }
-
-tar xpvf stage3.tar.xz --xattrs-include='.' --numeric-owner || {
-echo "Oshibka pri razpakovanii Stage3!"
-exit 1
+tar xpvf stage3.tar.xz --xattrs-include='*' --numeric-owner || {
+    echo "Oshibka pri razpakovanii Stage3!"
+    exit 1
 }
 
 # Shag 6: Kopirovanie setevih nastroyek
 echo -e "\n\033[1;32m[6/13] Kopirovanie setevih nastroyek\033[0m"
 cp /etc/resolv.conf /mnt/gentoo/etc/
 if [ -d /etc/NetworkManager/system-connections ]; then
-mkdir -p /mnt/gentoo/etc/NetworkManager/
-cp -r /etc/NetworkManager/system-connections /mnt/gentoo/etc/NetworkManager/
+    mkdir -p /mnt/gentoo/etc/NetworkManager/
+    cp -r /etc/NetworkManager/system-connections /mnt/gentoo/etc/NetworkManager/
 fi
 
 # Shag 7: Chroot
@@ -98,11 +108,22 @@ echo "2. Kiev"
 echo "3. Minsk"
 read -p "Vvedite nomer chasovogo poiasa: " TIMEZONE
 case $TIMEZONE in
+    1)
+        ln -sf /usr/share/zoneinfo/Moscow /etc/localtime
+        ;;
+    2)
+        ln -sf /usr/share/zoneinfo/Kiev /etc/localtime
+        ;;
+    3)
+        ln -sf /usr/share/zoneinfo/Minsk /etc/localtime
+        ;;
+    *)
+        echo "Nevernyi vybor!" && exit 1
+        ;;
+esac
+hwclock --systohc
 
-ln -sf /usr/share/zoneinfo/Moscow /etc/localtime ;;
-ln -sf /usr/share/zoneinfo/Kiev /etc/localtime ;;
-ln -sf /usr/share/zoneinfo/Minsk /etc/localtime ;; esac hwclock --systohc
-Shag 12: Nastroyka imeni hosta
+# Shag 12: Nastroyka imeni hosta
 echo -e "\n\033[1;32m[12/13] Nastroyka imeni hosta\033[0m"
 read -p "Vvedite ime hosta: " HOSTNAME
 echo "$HOSTNAME" > /etc/hostname
