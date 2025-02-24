@@ -11,7 +11,6 @@ if [ "$EUID" -ne 0 ]; then
 echo "Zapustite skript ot imeni root!"
 exit 1
 fi
-done
 
 # Funktsiya podtverzhdeniya
 affirm() {
