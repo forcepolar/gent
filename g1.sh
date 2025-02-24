@@ -11,12 +11,6 @@ if [ "$EUID" -ne 0 ]; then
 echo "Zapustite skript ot imeni root!"
 exit 1
 fi
-
-for cmd in parted wget tar chroot; do
-if ! command -v cmd &> /dev/null; then
-    echo "Oshibka: cmd ne ustanovlen!"
-exit 1
-fi
 done
 
 # Funktsiya podtverzhdeniya
