@@ -26,11 +26,19 @@ affirm() {
 }
 
 # Шаг 1: Настройка сети
+<<<<<<< HEAD
 echo -e "\n\033[1;32m[1/20] Настройка сети\033[0m"
 affirm "Настройте проводное соединение (dhcpcd)?" && dhcpcd
 
 # Шаг 2: Разделение диска
 echo -e "\n\033[1;32m[2/20] Разделение диска\033[0m"
+=======
+echo -e "\n\033[1;32m[1/14] Настройка сети\033[0m"
+affirm "Настройте проводное соединение (dhcpcd)?" && dhcpcd
+
+# Шаг 2: Разделение диска
+echo -e "\n\033[1;32m[2/14] Разделение диска\033[0m"
+>>>>>>> ff42552f1cc7db24aeae1bd626833484b73fa1e7
 lsblk
 read -p "Введите диск для установки (например, /dev/sda): " DISK
 affirm "Разделить диск $DISK? ВСЕ ДАННЫЕ БУДУТ УДАЛЕНЫ!" && {
@@ -42,20 +50,32 @@ affirm "Разделить диск $DISK? ВСЕ ДАННЫЕ БУДУТ УДА
 }
 
 # Шаг 3: Создание файловых систем
+<<<<<<< HEAD
 echo -e "\n\033[1;32m[3/20] Создание файловых систем\033[0m"
+=======
+echo -e "\n\033[1;32m[3/14] Создание файловых систем\033[0m"
+>>>>>>> ff42552f1cc7db24aeae1bd626833484b73fa1e7
 mkfs.fat -F32 "${DISK}1"
 mkswap "${DISK}2" && swapon "${DISK}2"
 mkfs.ext4 "${DISK}3"
 
 # Шаг 4: Монтирование
+<<<<<<< HEAD
 echo -e "\n\033[1;32m[4/20] Монтирование\033[0m"
+=======
+echo -e "\n\033[1;32m[4/14] Монтирование\033[0m"
+>>>>>>> ff42552f1cc7db24aeae1bd626833484b73fa1e7
 mkdir -p /mnt/gentoo
 mount "${DISK}3" /mnt/gentoo
 mkdir -p /mnt/gentoo/boot/efi
 mount "${DISK}1" /mnt/gentoo/boot/efi
 
 # Шаг 5: Загрузка Stage3
+<<<<<<< HEAD
 echo -e "\n\033[1;32m[5/20] Загрузка Stage3\033[0m"
+=======
+echo -e "\n\033[1;32m[5/14] Загрузка Stage3\033[0m"
+>>>>>>> ff42552f1cc7db24aeae1bd626833484b73fa1e7
 cd /mnt/gentoo
 wget -O stage3.tar.xz "$STAGE3_URL" || {
     echo "Ошибка при загрузке Stage3!"
@@ -67,7 +87,11 @@ tar xpvf stage3.tar.xz --xattrs-include='*' --numeric-owner || {
 }
 
 # Шаг 6: Копирование сетевых настроек
+<<<<<<< HEAD
 echo -e "\n\033[1;32m[6/20] Копирование сетевых настроек\033[0m"
+=======
+echo -e "\n\033[1;32m[6/14] Копирование сетевых настроек\033[0m"
+>>>>>>> ff42552f1cc7db24aeae1bd626833484b73fa1e7
 cp /etc/resolv.conf /mnt/gentoo/etc/
 if [ -d /etc/NetworkManager/system-connections ]; then
     mkdir -p /mnt/gentoo/etc/NetworkManager/
@@ -75,7 +99,11 @@ if [ -d /etc/NetworkManager/system-connections ]; then
 fi
 
 # Шаг 7: Chroot
+<<<<<<< HEAD
 echo -e "\n\033[1;32m[7/20] Вход в chroot\033[0m"
+=======
+echo -e "\n\033[1;32m[7/14] Вход в chroot\033[0m"
+>>>>>>> ff42552f1cc7db24aeae1bd626833484b73fa1e7
 mount -t proc /proc /mnt/gentoo/proc
 mount --rbind /sys /mnt/gentoo/sys
 mount --rbind /dev /mnt/gentoo/dev
@@ -83,6 +111,7 @@ mount --rbind /dev /mnt/gentoo/dev
 chroot /mnt/gentoo /bin/bash << 'EOF'
 
 # Шаг 8: Обновление системы и установка пакетов
+<<<<<<< HEAD
 echo -e "\n\033[1;32m[8/20] Обновление системы и установка пакетов\033[0m"
 emerge-webrsync
 emerge --update --deep --newuse @world
@@ -130,11 +159,67 @@ echo "$USERNAME:$PASSWORD" | chpasswd
 
 # Шаг 14: Настройка локали
 echo -e "\n\033[1;32m[14/20] Настройка локали\033[0m"
+=======
+echo -e "\n\033[1;32m[8/14] Обновление системы и установка пакетов\033[0m"
+emerge-webrsync
+echo "Выберите пакеты для установки:"
+echo "1. sys-boot/grub"
+echo "2. sys-kernel/gentoo-sources"
+echo "3. sys-apps/systemd"
+echo "4. sys-fs/e2fsprogs"
+echo "5. sys-fs/udev"
+echo "6. sys-fs/udev-init-scripts"
+read -p "Введите номера пакетов для установки (разделенные пробелами): " PACKAGES
+emerge --update --deep --newuse $PACKAGES
+
+# Шаг 9: Настройка fstab
+echo -e "\n\033[1;32m[9/14] Настройка fstab\033[0m"
+echo "/dev/sda3 / ext4 defaults 0 1" >> /etc/fstab
+echo "/dev/sda2 none swap sw 0 0" >> /etc/fstab
+echo "/dev/sda1 /boot/efi vfat defaults 0 1" >> /etc/fstab
+
+# Шаг 10: Установка и настройка bootloaderа
+echo -e "\n\033[1;32m[10/14] Установка и настройка GRUB\033[0m"
+grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=GRUB
+grub-mkconfig -o /boot/grub/grub.cfg
+
+# Шаг 11: Настройка часового пояса
+echo -e "\n\033[1;32m[11/14] Настройка часового пояса\033[0m"
+echo "Выберите часовой пояс:"
+echo "1. Москва"
+echo "2. Киев"
+echo "3. Минск"
+read -p "Введите номер часового пояса: " TIMEZONE
+case $TIMEZONE in
+    1)
+        ln -sf /usr/share/zoneinfo/Moscow /etc/localtime
+        ;;
+    2)
+        ln -sf /usr/share/zoneinfo/Kiev /etc/localtime
+        ;;
+    3)
+        ln -sf /usr/share/zoneinfo/Minsk /etc/localtime
+        ;;
+    *)
+        echo "Неверный выбор!" && exit 1
+        ;;
+esac
+hwclock --systohc
+
+# Шаг 12: Настройка имени хоста
+echo -e "\n\033[1;32m[12/14] Настройка имени хоста\033[0m"
+read -p "Введите имя хоста: " HOSTNAME
+echo "$HOSTNAME" > /etc/hostname
+
+# Шаг 13: Настройка локали
+echo -e "\n\033[1;32m[13/14] Настройка локали\033[0m"
+>>>>>>> ff42552f1cc7db24aeae1bd626833484b73fa1e7
 echo "ru_RU.UTF-8 UTF-8" >> /etc/locale.gen
 locale-gen
 eselect locale set ru_RU.UTF-8
 env-update && source /etc/profile
 
+<<<<<<< HEAD
 # Шаг 15: Настройка часового пояса
 echo -e "\n\033[1;32m[15/20] Настройка часового пояса\033[0m"
 echo "Введите часовой пояс: "
@@ -164,3 +249,21 @@ selinux-activate
 
 # Шаг 19: Настройка системы
 echo -e "\n
+=======
+# Шаг 14: Выход из chroot и очистка
+echo -e "\n\033[1;32m[14/14] Выход из chroot и очистка\033[0m"
+exit
+
+EOF
+
+# Размонтирование
+echo -e "\nРазмонтирование файловых систем..."
+umount -R /mnt/gentoo/dev
+umount -R /mnt/gentoo/sys
+umount -R /mnt/gentoo/proc
+umount /mnt/gentoo/boot/efi
+umount /mnt/gentoo
+
+# Последнее сообщение
+echo -e "\n\033[1;32mУстановка завершена! Теперь вы можете перезагрузить систему.\033[0m"
+>>>>>>> ff42552f1cc7db24aeae1bd626833484b73fa1e7
